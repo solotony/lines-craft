@@ -25,7 +25,15 @@
 | Ball movement            | Repeated impact sounds synchronized with the ball's bounces. |
 | Beating the King's score | A triumphant trumpet fanfare.                                |
 
-## 4. Important Implementation Details
+## 4. Turn Aftermath Timing
+
+After a move, consequences wait until the ball has finished bouncing into the destination cell:
+
+1. Ball lands and sits briefly (~220 ms).
+2. If a line was formed — those balls disappear (no spawn that turn).
+3. Otherwise — the three preview balls appear **one by one** (~140 ms apart), then the next preview refills. If the new balls themselves form a line, it clears after a short pause.
+
+## 5. Important Implementation Details
 
 - **Synchronization:** The landing sound coincides with the ball's visual compression.
 - **Physics:** The ball does not slide across the board; it bounces elastically from cell to cell.

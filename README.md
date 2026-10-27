@@ -4,8 +4,8 @@ Native Flutter desktop/web recreation of **Color Lines** by Gamos Ltd. (1992): p
 
 ## Requirements
 
-- Flutter SDK (project developed against Flutter 3.41 / Dart 3.11)
-- macOS desktop recommended (`macos` platform enabled)
+- Flutter SDK only (developed against Flutter 3.41 / Dart 3.11)
+- **No CocoaPods / no third-party plugins** — sound uses `SystemSound`, scores use a local JSON file
 
 ## Run
 
@@ -49,7 +49,8 @@ flutter test
 ## Known limitations
 
 - Scoring uses a provisional Lines 98 table; exact 1992 Gamos formula is unverified.
-- Audio uses generated placeholder tones, not original recordings.
+- Audio uses system click sounds (no plugin); WAV placeholders are unused until a pure-Dart player is added.
+- High score is stored in `~/.color_lines_highscore.json`.
 - Decorative gothic character-name fonts are approximated with the 8×8 pixel font.
 - Title-screen cityscape art is out of MVP scope (no screenshot cropping).
 - Top Ten name-entry UI is not fully recreated; high score persists locally as the King record.

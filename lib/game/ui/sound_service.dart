@@ -1,11 +1,12 @@
-import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/services.dart';
 
-/// Plays short SFX. Placeholder tones stand in for unavailable original audio.
+/// Lightweight SFX via built-in [SystemSound] — no native audio plugins.
+///
+/// Asset path constants document the intended original cues; WAV placeholders
+/// remain in `assets/sounds/` for a future optional player.
 class SoundService {
-  SoundService({AudioPlayer? player}) : _injected = player;
+  SoundService();
 
-  final AudioPlayer? _injected;
-  AudioPlayer? _player;
   bool enabled = true;
   bool _fanfarePlayed = false;
 
@@ -15,12 +16,10 @@ class SoundService {
   static const fanfareAsset = 'sounds/fanfare.wav';
   static const titleAsset = 'sounds/title.wav';
 
-  AudioPlayer get _audio => _player ??= (_injected ?? AudioPlayer());
-
-  Future<void> playSelect() => _play(selectAsset);
-  Future<void> playLand() => _play(landAsset);
-  Future<void> playMove() => _play(moveAsset);
-  Future<void> playTitle() => _play(titleAsset);
+  Future<void> playSelect() => _click();
+  Future<void> playLand() => _click();
+  Future<void> playMove() => _click();
+  Future<void> playTitle() async {}
 
   /// Fanfare only the first time the player beats the King's score.
   Future<void> playFanfareIfNeeded(bool beatKing) async {
@@ -28,7 +27,7 @@ class SoundService {
       return;
     }
     _fanfarePlayed = true;
-    await _play(fanfareAsset);
+    await _click();
   }
 
   bool get fanfarePlayed => _fanfarePlayed;
@@ -37,20 +36,16 @@ class SoundService {
     _fanfarePlayed = false;
   }
 
-  Future<void> _play(String asset) async {
+  Future<void> _click() async {
     if (!enabled) {
       return;
     }
     try {
-      await _audio.stop();
-      await _audio.play(AssetSource(asset));
+      await SystemSound.play(SystemSoundType.click);
     } catch (_) {
-      // Audio may be unavailable in tests / headless CI.
+      // Unavailable in some test / headless environments.
     }
   }
 
-  Future<void> dispose() async {
-    await _player?.dispose();
-    _player = null;
-  }
+  Future<void> dispose() async {}
 }

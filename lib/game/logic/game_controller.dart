@@ -7,6 +7,8 @@ import 'movement_service.dart';
 import 'scoring_service.dart';
 import 'spawn_service.dart';
 
+enum TurnAftermath { none, clearLine, spawn }
+
 class MoveResult {
   const MoveResult({
     required this.state,
@@ -15,6 +17,7 @@ class MoveResult {
     this.pointsGained = 0,
     this.spawned = const <CellPosition>[],
     this.invalid = false,
+    this.aftermath = TurnAftermath.none,
   });
 
   final GameState state;
@@ -23,6 +26,22 @@ class MoveResult {
   final int pointsGained;
   final List<CellPosition> spawned;
   final bool invalid;
+  final TurnAftermath aftermath;
+}
+
+class _PendingTurn {
+  _PendingTurn.clear({
+    required this.clearCells,
+    required this.lineLengths,
+  }) : spawnColors = null;
+
+  _PendingTurn.spawn(this.spawnColors)
+      : clearCells = null,
+        lineLengths = null;
+
+  final List<CellPosition>? clearCells;
+  final List<int>? lineLengths;
+  final List<BallColor>? spawnColors;
 }
 
 /// Orchestrates selection, movement, clears, spawn, and game-over.
@@ -45,6 +64,22 @@ class GameController {
   GameState get state => _state;
   late GameState _state;
 
+  _PendingTurn? _pending;
+  final List<CellPosition> _spawnedThisTurn = [];
+
+  bool get hasPendingTurn => _pending != null;
+
+  TurnAftermath get pendingAftermath {
+    final pending = _pending;
+    if (pending == null) {
+      return TurnAftermath.none;
+    }
+    if (pending.clearCells != null) {
+      return TurnAftermath.clearLine;
+    }
+    return TurnAftermath.spawn;
+  }
+
   /// Starts a new game. Optional [board] / [next] for tests.
   GameState startNewGame({
     BoardState? board,
@@ -52,6 +87,8 @@ class GameController {
     int kingScore = 100,
     List<CellPosition>? initialPositions,
   }) {
+    _pending = null;
+    _spawnedThisTurn.clear();
     final b = board?.copy() ?? BoardState.empty();
     final upcoming = next ?? _spawn.peekNext(SpawnService.spawnPerTurn);
 
@@ -75,6 +112,8 @@ class GameController {
 
   /// Loads an exact state (tests / restore).
   void load(GameState state) {
+    _pending = null;
+    _spawnedThisTurn.clear();
     _state = state.copyWith(board: state.board);
   }
 
@@ -90,8 +129,11 @@ class GameController {
     return _state;
   }
 
-  MoveResult tryMoveTo(CellPosition dest) {
-    if (_state.phase == GamePhase.gameOver) {
+  /// Moves the selected ball to [dest] without clearing or spawning.
+  /// Aftermath (line clear or spawn) stays pending for [resolvePending] /
+  /// [spawnNext] / [applyPendingClear].
+  MoveResult beginMove(CellPosition dest) {
+    if (_state.phase == GamePhase.gameOver || _pending != null) {
       return MoveResult(state: _state, invalid: true);
     }
     final from = _state.selected;
@@ -99,7 +141,6 @@ class GameController {
       return MoveResult(state: _state, invalid: true);
     }
     if (!_state.board.isEmpty(dest)) {
-      // Select other ball instead.
       select(dest);
       return MoveResult(state: _state, invalid: true);
     }
@@ -114,48 +155,122 @@ class GameController {
     board.set(from, null);
     board.set(dest, color);
 
-    var score = _state.score;
-    var beatKing = _state.beatKing;
-    var next = List<BallColor>.from(_state.nextBalls);
-    final cleared = <CellPosition>[];
-    var points = 0;
-    final spawned = <CellPosition>[];
-
     final lineAfterMove = _lines.detect(board);
     if (lineAfterMove.found) {
-      points = _scoring.pointsForLines(lineAfterMove.lineLengths);
+      _pending = _PendingTurn.clear(
+        clearCells: List<CellPosition>.from(lineAfterMove.cells),
+        lineLengths: List<int>.from(lineAfterMove.lineLengths),
+      );
+    } else {
+      _pending = _PendingTurn.spawn(List<BallColor>.from(_state.nextBalls));
+      _spawnedThisTurn.clear();
+    }
+
+    _state = _state.copyWith(
+      board: board,
+      clearSelected: true,
+    );
+
+    return MoveResult(
+      state: _state,
+      path: path,
+      aftermath: pendingAftermath,
+    );
+  }
+
+  /// Removes a pending line and awards points. No-op if spawn is pending.
+  MoveResult applyPendingClear() {
+    final pending = _pending;
+    final cells = pending?.clearCells;
+    final lengths = pending?.lineLengths;
+    if (cells == null || lengths == null) {
+      return MoveResult(state: _state, invalid: true);
+    }
+
+    final board = _state.board.copy();
+    for (final c in cells) {
+      board.set(c, null);
+    }
+    final points = _scoring.pointsForLines(lengths);
+    final score = _state.score + points;
+    final beatKing = _state.beatKing || score > _state.kingScore;
+    final phase = board.isFull ? GamePhase.gameOver : GamePhase.playing;
+
+    _pending = null;
+    _state = GameState(
+      board: board,
+      nextBalls: _state.nextBalls,
+      selected: null,
+      score: score,
+      kingScore: _state.kingScore,
+      phase: phase,
+      beatKing: beatKing,
+    );
+
+    return MoveResult(
+      state: _state,
+      cleared: cells,
+      pointsGained: points,
+      aftermath: TurnAftermath.none,
+    );
+  }
+
+  /// Places the next pending spawn ball. Returns null when none left to place
+  /// (caller should then call [finishPendingSpawn]).
+  CellPosition? spawnNext() {
+    final pending = _pending;
+    final colors = pending?.spawnColors;
+    if (colors == null || colors.isEmpty) {
+      return null;
+    }
+
+    final board = _state.board.copy();
+    final placed = _spawn.placeBalls(board, [colors.removeAt(0)]);
+    if (placed.isEmpty) {
+      colors.clear();
+      _state = _state.copyWith(board: board);
+      return null;
+    }
+
+    _spawnedThisTurn.add(placed.first);
+    _state = _state.copyWith(board: board);
+    return placed.first;
+  }
+
+  bool get hasPendingSpawnBalls {
+    final colors = _pending?.spawnColors;
+    return colors != null && colors.isNotEmpty;
+  }
+
+  /// After all spawn balls are placed: refill preview, clear any new lines.
+  MoveResult finishPendingSpawn() {
+    final pending = _pending;
+    if (pending == null || pending.spawnColors == null) {
+      return MoveResult(state: _state, invalid: true);
+    }
+
+    final board = _state.board.copy();
+    final next = _spawn.peekNext(SpawnService.spawnPerTurn);
+    final cleared = <CellPosition>[];
+    var points = 0;
+    var score = _state.score;
+
+    final lineAfterSpawn = _lines.detect(board);
+    if (lineAfterSpawn.found) {
+      points = _scoring.pointsForLines(lineAfterSpawn.lineLengths);
       score += points;
-      for (final c in lineAfterMove.cells) {
+      for (final c in lineAfterSpawn.cells) {
         board.set(c, null);
         cleared.add(c);
       }
-      // Successful clear: no spawn this turn.
-    } else {
-      // Spawn the previewed balls, then refill preview.
-      final toPlace = List<BallColor>.from(next);
-      spawned.addAll(_spawn.placeBalls(board, toPlace));
-      next = _spawn.peekNext(SpawnService.spawnPerTurn);
-
-      // Spawned balls may form lines; clear and score, but no extra turn.
-      final lineAfterSpawn = _lines.detect(board);
-      if (lineAfterSpawn.found) {
-        final spawnPoints = _scoring.pointsForLines(lineAfterSpawn.lineLengths);
-        points += spawnPoints;
-        score += spawnPoints;
-        for (final c in lineAfterSpawn.cells) {
-          board.set(c, null);
-          cleared.add(c);
-        }
-      }
     }
 
-    if (!beatKing && score > _state.kingScore) {
-      beatKing = true;
-    }
+    final beatKing = _state.beatKing || score > _state.kingScore;
+    final phase = board.isFull ? GamePhase.gameOver : GamePhase.playing;
+    final spawned = List<CellPosition>.from(_spawnedThisTurn);
 
-    final phase =
-        board.isFull ? GamePhase.gameOver : GamePhase.playing;
-
+    _pending = null;
+    _spawnedThisTurn.clear();
     _state = GameState(
       board: board,
       nextBalls: next,
@@ -168,10 +283,43 @@ class GameController {
 
     return MoveResult(
       state: _state,
-      path: path,
       cleared: cleared,
       pointsGained: points,
       spawned: spawned,
+      aftermath: TurnAftermath.none,
+    );
+  }
+
+  /// Applies the full turn aftermath synchronously (tests / non-animated).
+  MoveResult resolvePendingFully() {
+    if (_pending == null) {
+      return MoveResult(state: _state);
+    }
+    if (_pending!.clearCells != null) {
+      return applyPendingClear();
+    }
+    while (hasPendingSpawnBalls) {
+      if (spawnNext() == null) {
+        break;
+      }
+    }
+    return finishPendingSpawn();
+  }
+
+  /// Full move: relocate ball then resolve clear/spawn immediately.
+  MoveResult tryMoveTo(CellPosition dest) {
+    final begun = beginMove(dest);
+    if (begun.invalid || begun.path == null) {
+      return begun;
+    }
+    final resolved = resolvePendingFully();
+    return MoveResult(
+      state: _state,
+      path: begun.path,
+      cleared: resolved.cleared,
+      pointsGained: resolved.pointsGained,
+      spawned: resolved.spawned,
+      aftermath: TurnAftermath.none,
     );
   }
 
@@ -187,6 +335,22 @@ class GameController {
     }
     if (selected != null) {
       return tryMoveTo(pos);
+    }
+    return MoveResult(state: _state, invalid: true);
+  }
+
+  /// Animated tap: select or [beginMove] without resolving aftermath.
+  MoveResult onCellTappedBegin(CellPosition pos) {
+    if (_state.phase == GamePhase.gameOver) {
+      return MoveResult(state: _state, invalid: true);
+    }
+    final selected = _state.selected;
+    if (!_state.board.isEmpty(pos)) {
+      select(pos);
+      return MoveResult(state: _state);
+    }
+    if (selected != null) {
+      return beginMove(pos);
     }
     return MoveResult(state: _state, invalid: true);
   }

@@ -11,7 +11,7 @@ lib/game/
   logic/        # Movement (BFS), LineDetector, Scoring, Spawn, GameController
   rendering/    # Palette, pixel text, board/cell/ball/sprite painters, layout
   ui/           # GameScreen (scale), GameFrame (session), input, sound
-  persistence/  # HighScoreStore (shared_preferences)
+  persistence/  # HighScoreStore (JSON file via dart:io, no plugins)
 ```
 
 ## Rules of separation
@@ -32,4 +32,8 @@ Provisional Lines 98 table (see `docs/counting.md`); not verified as exact Gamos
 
 ## Audio
 
-Placeholder WAV files in `assets/sounds/`. Original Gamos samples are unknown; title and fanfare are separate assets. Fanfare plays once when the player first exceeds the King score.
+No native audio plugins (so macOS runs without CocoaPods). Cues use Flutter `SystemSound`. Placeholder WAV files remain in `assets/sounds/` for a future optional player. Fanfare flag still fires once when beating the King score.
+
+## Dependencies
+
+Runtime depends only on the Flutter SDK — no pub plugins that need CocoaPods/Gradle.

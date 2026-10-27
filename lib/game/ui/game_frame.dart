@@ -12,6 +12,7 @@ import '../persistence/high_score_store.dart';
 import '../rendering/ball_renderer.dart';
 import '../rendering/board_layout.dart';
 import '../rendering/board_renderer.dart';
+import '../rendering/hud_layout.dart';
 import '../rendering/palette.dart';
 import '../rendering/pixel_text_renderer.dart';
 import '../rendering/sprite_renderer.dart';
@@ -58,6 +59,7 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
   bool _showHelp = false;
   bool _busy = false;
   bool _playedLandThisHop = false;
+  int? _pressedFKey;
 
   GameController get controller => _controller;
 
@@ -144,9 +146,70 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
         _movePath = null;
         _movingColor = null;
         _footprintTrail = [];
-        _busy = false;
       });
+      _afterMoveLanded();
     }
+  }
+
+  /// Ball has landed: brief pause, then clear the line or spawn balls one-by-one.
+  Future<void> _afterMoveLanded() async {
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+    if (!mounted || !_busy) {
+      return;
+    }
+
+    final beatBefore = _controller.state.beatKing;
+
+    if (_controller.pendingAftermath == TurnAftermath.clearLine) {
+      setState(() {
+        _controller.applyPendingClear();
+      });
+      if (!beatBefore && _controller.state.beatKing) {
+        _sound.playFanfareIfNeeded(true);
+      }
+      if (_controller.state.phase == GamePhase.gameOver) {
+        _persistScoreIfNeeded();
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() => _busy = false);
+      return;
+    }
+
+    if (_controller.pendingAftermath == TurnAftermath.spawn) {
+      while (_controller.hasPendingSpawnBalls) {
+        if (!mounted || !_busy) {
+          return;
+        }
+        setState(() {
+          _controller.spawnNext();
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 140));
+      }
+      if (!mounted || !_busy) {
+        return;
+      }
+      // Let the last spawned ball sit briefly before spawn-line clear / preview refill.
+      await Future<void>.delayed(const Duration(milliseconds: 160));
+      if (!mounted || !_busy) {
+        return;
+      }
+      setState(() {
+        _controller.finishPendingSpawn();
+      });
+      if (!beatBefore && _controller.state.beatKing) {
+        _sound.playFanfareIfNeeded(true);
+      }
+      if (_controller.state.phase == GamePhase.gameOver) {
+        _persistScoreIfNeeded();
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+    setState(() => _busy = false);
   }
 
   Future<void> _loadAssets() async {
@@ -236,7 +299,42 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
     _loadKingScore();
   }
 
-  void _onTap(Offset local) {
+  void _activateFKey(int index) {
+    switch (index) {
+      case 0:
+        setState(() => _showHelp = !_showHelp);
+      case 1:
+        setState(() => _sound.enabled = !_sound.enabled);
+      case 2:
+        setState(() {
+          _controller.load(
+            _controller.state.copyWith(clearSelected: true),
+          );
+        });
+      case 3:
+        _restart();
+    }
+  }
+
+  void _onPointerDown(Offset local) {
+    final fKey = HudLayout.hitTestFKey(local);
+    if (fKey != null) {
+      setState(() => _pressedFKey = fKey);
+      return;
+    }
+  }
+
+  void _onPointerUp(Offset local) {
+    final pressed = _pressedFKey;
+    if (pressed != null) {
+      final hit = HudLayout.hitTestFKey(local);
+      setState(() => _pressedFKey = null);
+      if (hit == pressed) {
+        _activateFKey(pressed);
+      }
+      return;
+    }
+
     if (_busy || _showHelp) {
       if (_showHelp) {
         setState(() => _showHelp = false);
@@ -249,8 +347,7 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
     }
 
     final before = _controller.state.selected;
-    final beatBefore = _controller.state.beatKing;
-    final result = _controller.onCellTapped(cell);
+    final result = _controller.onCellTappedBegin(cell);
 
     if (result.path != null && result.path!.length > 1) {
       setState(() {
@@ -262,12 +359,6 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
         _playedLandThisHop = false;
       });
       _sound.playMove();
-      if (!beatBefore && _controller.state.beatKing) {
-        _sound.playFanfareIfNeeded(true);
-      }
-      if (_controller.state.phase == GamePhase.gameOver) {
-        _persistScoreIfNeeded();
-      }
       _move
         ..reset()
         ..forward();
@@ -283,14 +374,22 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
     }
   }
 
+  void _onPointerCancel() {
+    if (_pressedFKey != null) {
+      setState(() => _pressedFKey = null);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Focus(
       autofocus: true,
       onKeyEvent: _onKey,
-      child: GestureDetector(
+      child: Listener(
         behavior: HitTestBehavior.opaque,
-        onTapDown: (d) => _onTap(d.localPosition),
+        onPointerDown: (e) => _onPointerDown(e.localPosition),
+        onPointerUp: (e) => _onPointerUp(e.localPosition),
+        onPointerCancel: (_) => _onPointerCancel(),
         child: AnimatedBuilder(
           animation: Listenable.merge([_bounce, _move]),
           builder: (context, _) {
@@ -310,6 +409,7 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
                 soundOn: _sound.enabled,
                 showHelp: _showHelp,
                 animating: _busy,
+                pressedFKey: _pressedFKey,
               ),
               size: const Size(640, 480),
             );
@@ -335,6 +435,7 @@ class _PlayPainter extends CustomPainter {
     required this.soundOn,
     required this.showHelp,
     required this.animating,
+    required this.pressedFKey,
   });
 
   final GameState state;
@@ -350,6 +451,7 @@ class _PlayPainter extends CustomPainter {
   final bool soundOn;
   final bool showHelp;
   final bool animating;
+  final int? pressedFKey;
 
   static const _board = BoardRenderer();
   static const _balls = BallRenderer();
@@ -366,149 +468,24 @@ class _PlayPainter extends CustomPainter {
     final panel = Paint()
       ..color = GamePalette.panelGray
       ..isAntiAlias = false;
-    canvas.drawRect(const Rect.fromLTWH(0, 0, 640, 42), panel);
-    canvas.drawRect(const Rect.fromLTWH(0, 423, 640, 57), panel);
-
-    _sprites.paintPedestal(
-      canvas,
-      topCenter: SpriteRenderer.kingPedestalTop,
-      height: 90,
+    canvas.drawRect(
+      const Rect.fromLTWH(0, 0, 640, HudLayout.topBarHeight),
+      panel,
     );
-    _sprites.paintPedestal(
-      canvas,
-      topCenter: SpriteRenderer.pretenderPedestalTop,
-      height: 60,
-      width: 32,
-    );
-
-    if (king != null) {
-      _sprites.paintSprite(
-        canvas,
-        king!,
-        SpriteRenderer.kingPedestalTop,
-        maxHeight: 90,
-      );
-    }
-    if (pretender != null) {
-      _sprites.paintSprite(
-        canvas,
-        pretender!,
-        SpriteRenderer.pretenderPedestalTop,
-        maxHeight: 78,
-      );
-    }
-
-    _text.paint(
-      canvas,
-      'HANDICAP',
-      const Offset(70, 380),
-      color: GamePalette.labelYellow,
-      scale: 1,
-      align: PixelTextAlign.center,
-    );
-    _text.paint(
-      canvas,
-      'PRETENDER',
-      const Offset(570, 380),
-      color: GamePalette.labelYellow,
-      scale: 1,
-      align: PixelTextAlign.center,
+    canvas.drawRect(
+      const Rect.fromLTWH(
+        0,
+        HudLayout.bottomBarTop,
+        640,
+        HudLayout.bottomBarHeight,
+      ),
+      panel,
     );
 
-    final selected = state.selected == null
-        ? null
-        : (state.selected!.col, state.selected!.row);
-    _board.paint(canvas, selected: selected);
-
-    _paintFootprints(canvas);
-
-    final hideCell = animating && movePath != null ? movePath!.last : null;
-
-    for (var row = 0; row < 9; row++) {
-      for (var col = 0; col < 9; col++) {
-        final pos = CellPosition(col, row);
-        final color = state.board[pos];
-        if (color == null) {
-          continue;
-        }
-        if (hideCell == pos) {
-          continue;
-        }
-        final center = BoardLayout.cellCenter(col, row);
-        final isSelected =
-            state.selected == pos && !animating;
-        if (isSelected) {
-          _paintBouncingBall(canvas, center, color, bounceT);
-        } else {
-          _balls.paint(canvas, center, color: color, diameter: 24);
-        }
-      }
-    }
-
-    if (animating && movePath != null && movingColor != null) {
-      final from = movePath![moveIndex];
-      final to = moveIndex + 1 < movePath!.length
-          ? movePath![moveIndex + 1]
-          : from;
-      final a = BoardLayout.cellCenter(from.col, from.row);
-      final b = BoardLayout.cellCenter(to.col, to.row);
-      final t = moveT;
-      final hop = -6 * 4 * t * (1 - t); // parabolic hop
-      final pos = Offset(
-        ui.lerpDouble(a.dx, b.dx, t)!,
-        ui.lerpDouble(a.dy, b.dy, t)! + hop,
-      );
-      _paintBouncingBall(canvas, pos, movingColor!, t);
-    }
-
-    _text.paint(
-      canvas,
-      'NEXT',
-      const Offset(280, 8),
-      color: GamePalette.black,
-      scale: 1,
-    );
-    for (var i = 0; i < state.nextBalls.length && i < 3; i++) {
-      final cx = 320.0 + i * 28;
-      canvas.drawRect(
-        Rect.fromLTWH(cx - 12, 18, 24, 20),
-        Paint()
-          ..color = GamePalette.shadowGray
-          ..isAntiAlias = false,
-      );
-      _balls.paint(
-        canvas,
-        Offset(cx, 28),
-        color: state.nextBalls[i],
-        diameter: 14,
-      );
-    }
-
-    _text.paint(
-      canvas,
-      '${state.kingScore}',
-      const Offset(24, 12),
-      color: GamePalette.ballGreen,
-      background: GamePalette.black,
-      scale: 2,
-    );
-    _text.paint(
-      canvas,
-      '${state.score}',
-      const Offset(560, 12),
-      color: GamePalette.ballGreen,
-      background: GamePalette.black,
-      scale: 2,
-    );
-
-    final soundLabel = soundOn ? 'F2 SOUND' : 'F2 MUTE';
-    _text.paint(
-      canvas,
-      'F1 HELP  $soundLabel  F3 NEXT  F4 RESTART',
-      const Offset(64, 440),
-      color: GamePalette.white,
-      scale: 1,
-    );
+    _paintCharacters(canvas);
+    _paintBoardAndBalls(canvas);
+    _paintTopHud(canvas);
+    _paintBottomHud(canvas);
 
     if (state.phase == GamePhase.gameOver) {
       canvas.drawRect(
@@ -558,6 +535,297 @@ class _PlayPainter extends CustomPainter {
           align: PixelTextAlign.center,
         );
       }
+    }
+  }
+
+  void _paintCharacters(Canvas canvas) {
+    final kingShaft = HudLayout.columnShaftHeight(
+      state.kingScore,
+      state.score,
+    );
+    final pretenderShaft = HudLayout.columnShaftHeight(
+      state.score,
+      state.kingScore,
+    );
+    final kingTop = HudLayout.pedestalTop(
+      HudLayout.kingCenterX,
+      kingShaft,
+    );
+    final pretenderTop = HudLayout.pedestalTop(
+      HudLayout.pretenderCenterX,
+      pretenderShaft,
+    );
+
+    _sprites.paintPedestal(
+      canvas,
+      topCenter: kingTop,
+      height: kingShaft,
+      width: HudLayout.pedestalWidth,
+      baseHeight: HudLayout.pedestalBaseHeight,
+      capHeight: HudLayout.pedestalCapHeight,
+    );
+    _sprites.paintPedestal(
+      canvas,
+      topCenter: pretenderTop,
+      height: pretenderShaft,
+      width: 32,
+      baseHeight: HudLayout.pedestalBaseHeight,
+      capHeight: HudLayout.pedestalCapHeight,
+    );
+
+    if (king != null) {
+      _sprites.paintSprite(
+        canvas,
+        king!,
+        kingTop,
+        maxHeight: 90,
+      );
+    }
+    if (pretender != null) {
+      _sprites.paintSprite(
+        canvas,
+        pretender!,
+        pretenderTop,
+        maxHeight: 78,
+      );
+    }
+
+    _text.paint(
+      canvas,
+      'HANDICAP',
+      Offset(HudLayout.kingCenterX, HudLayout.nameTop),
+      color: GamePalette.labelYellow,
+      scale: HudLayout.nameScale,
+      align: PixelTextAlign.center,
+    );
+    _text.paint(
+      canvas,
+      'PRETENDER',
+      Offset(HudLayout.pretenderCenterX, HudLayout.nameTop),
+      color: GamePalette.labelYellow,
+      scale: HudLayout.nameScale,
+      align: PixelTextAlign.center,
+    );
+  }
+
+  void _paintBoardAndBalls(Canvas canvas) {
+    final selected = state.selected == null
+        ? null
+        : (state.selected!.col, state.selected!.row);
+    _board.paint(canvas, selected: selected);
+
+    _paintFootprints(canvas);
+
+    final hideCell = animating && movePath != null ? movePath!.last : null;
+
+    for (var row = 0; row < 9; row++) {
+      for (var col = 0; col < 9; col++) {
+        final pos = CellPosition(col, row);
+        final color = state.board[pos];
+        if (color == null) {
+          continue;
+        }
+        if (hideCell == pos) {
+          continue;
+        }
+        final center = BoardLayout.cellCenter(col, row);
+        final isSelected = state.selected == pos && !animating;
+        if (isSelected) {
+          _paintBouncingBall(canvas, center, color, bounceT);
+        } else {
+          _balls.paint(canvas, center, color: color, diameter: 24);
+        }
+      }
+    }
+
+    if (animating && movePath != null && movingColor != null) {
+      final from = movePath![moveIndex];
+      final to = moveIndex + 1 < movePath!.length
+          ? movePath![moveIndex + 1]
+          : from;
+      final a = BoardLayout.cellCenter(from.col, from.row);
+      final b = BoardLayout.cellCenter(to.col, to.row);
+      final t = moveT;
+      final hop = -6 * 4 * t * (1 - t);
+      final pos = Offset(
+        ui.lerpDouble(a.dx, b.dx, t)!,
+        ui.lerpDouble(a.dy, b.dy, t)! + hop,
+      );
+      _paintBouncingBall(canvas, pos, movingColor!, t);
+    }
+  }
+
+  void _paintTopHud(Canvas canvas) {
+    _paintInsetBox(canvas, HudLayout.leftScoreBox);
+    _paintInsetBox(canvas, HudLayout.rightScoreBox);
+
+    final scoreY = HudLayout.topHudMidY -
+        _text.measureHeight(scale: HudLayout.scoreScale) / 2;
+    _text.paint(
+      canvas,
+      _scoreText(state.kingScore),
+      Offset(HudLayout.leftScoreBox.center.dx, scoreY),
+      color: GamePalette.ballGreen,
+      scale: HudLayout.scoreScale,
+      align: PixelTextAlign.center,
+    );
+    _text.paint(
+      canvas,
+      _scoreText(state.score),
+      Offset(HudLayout.rightScoreBox.center.dx, scoreY),
+      color: GamePalette.ballGreen,
+      scale: HudLayout.scoreScale,
+      align: PixelTextAlign.center,
+    );
+
+    _text.paint(
+      canvas,
+      'NEXT',
+      HudLayout.nextLabelOrigin,
+      color: GamePalette.black,
+      scale: HudLayout.scoreScale,
+    );
+    _text.paint(
+      canvas,
+      'COLORS',
+      HudLayout.colorsLabelOrigin,
+      color: GamePalette.black,
+      scale: HudLayout.scoreScale,
+    );
+
+    for (var i = 0; i < 3; i++) {
+      final cell = HudLayout.nextBallCell(i);
+      _paintInsetBox(canvas, cell);
+      if (i < state.nextBalls.length) {
+        _balls.paint(
+          canvas,
+          HudLayout.nextBallCenter(i),
+          color: state.nextBalls[i],
+          diameter: HudLayout.nextBallDiameter,
+        );
+      }
+    }
+  }
+
+  void _paintBottomHud(Canvas canvas) {
+    const keys = ['F1', 'F2', 'F3', 'F4'];
+    final labels = [
+      'HELP',
+      soundOn ? 'SOUND' : 'MUTE',
+      'NEXT',
+      'RESTART',
+    ];
+    for (var i = 0; i < 4; i++) {
+      final button = HudLayout.fButtonRect(i);
+      _paintRaisedButton(
+        canvas,
+        button,
+        pressed: pressedFKey == i,
+      );
+      final keyY = button.center.dy -
+          _text.measureHeight(scale: HudLayout.scoreScale) / 2;
+      _text.paint(
+        canvas,
+        keys[i],
+        Offset(button.center.dx, keyY),
+        color: GamePalette.black,
+        scale: HudLayout.scoreScale,
+        align: PixelTextAlign.center,
+      );
+
+      final labelBox = HudLayout.fLabelRect(i, labels[i]);
+      _paintInsetBox(canvas, labelBox);
+      final labelY = labelBox.center.dy -
+          _text.measureHeight(scale: HudLayout.scoreScale) / 2;
+      _text.paint(
+        canvas,
+        labels[i],
+        Offset(labelBox.center.dx, labelY),
+        color: GamePalette.ballGreen,
+        scale: HudLayout.scoreScale,
+        align: PixelTextAlign.center,
+      );
+    }
+  }
+
+  String _scoreText(int value) {
+    final raw = '$value';
+    if (raw.length >= HudLayout.scoreDigits) {
+      return raw;
+    }
+    return raw; // left-pad visually via fixed box; digits stay natural width
+  }
+
+  void _paintInsetBox(Canvas canvas, Rect rect) {
+    final outer = Paint()
+      ..color = GamePalette.shadowGray
+      ..isAntiAlias = false;
+    final light = Paint()
+      ..color = GamePalette.white
+      ..isAntiAlias = false;
+    final dark = Paint()
+      ..color = GamePalette.darkGray
+      ..isAntiAlias = false;
+    final face = Paint()
+      ..color = GamePalette.black
+      ..isAntiAlias = false;
+
+    canvas.drawRect(rect, outer);
+    // Inset bevel: dark top/left, light bottom/right (recessed).
+    canvas.drawRect(
+      Rect.fromLTWH(rect.left, rect.top, rect.width, 2),
+      dark,
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(rect.left, rect.top, 2, rect.height),
+      dark,
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(rect.left, rect.bottom - 2, rect.width, 2),
+      light,
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(rect.right - 2, rect.top, 2, rect.height),
+      light,
+    );
+    canvas.drawRect(rect.deflate(2), face);
+  }
+
+  void _paintRaisedButton(Canvas canvas, Rect rect, {required bool pressed}) {
+    final face = Paint()
+      ..color = GamePalette.panelGray
+      ..isAntiAlias = false;
+    final light = Paint()
+      ..color = pressed ? GamePalette.shadowGray : GamePalette.white
+      ..isAntiAlias = false;
+    final dark = Paint()
+      ..color = pressed ? GamePalette.white : GamePalette.shadowGray
+      ..isAntiAlias = false;
+
+    canvas.drawRect(rect, face);
+    canvas.drawRect(
+      Rect.fromLTWH(rect.left, rect.top, rect.width, 2),
+      light,
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(rect.left, rect.top, 2, rect.height),
+      light,
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(rect.left, rect.bottom - 2, rect.width, 2),
+      dark,
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(rect.right - 2, rect.top, 2, rect.height),
+      dark,
+    );
+    if (pressed) {
+      canvas.drawRect(
+        rect.deflate(2),
+        Paint()
+          ..color = GamePalette.midGray
+          ..isAntiAlias = false,
+      );
     }
   }
 

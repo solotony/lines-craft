@@ -216,6 +216,53 @@ void main() {
       expect(result.spawned.length, 3);
     });
 
+    test('beginMove defers spawn until resolve', () {
+      final board = BoardState.empty();
+      board.set(const CellPosition(0, 0), BallColor.red);
+      final controller = GameController(
+        spawn: SpawnService(colorSequence: List.filled(30, BallColor.blue)),
+      );
+      controller.startNewGame(
+        board: board,
+        next: [BallColor.green, BallColor.yellow, BallColor.orange],
+      );
+      controller.select(const CellPosition(0, 0));
+      final begun = controller.beginMove(const CellPosition(0, 2));
+      expect(begun.aftermath, TurnAftermath.spawn);
+      expect(controller.state.board.occupiedCount, 1);
+      expect(controller.spawnNext(), isNotNull);
+      expect(controller.spawnNext(), isNotNull);
+      expect(controller.spawnNext(), isNotNull);
+      expect(controller.hasPendingSpawnBalls, isFalse);
+      final finished = controller.finishPendingSpawn();
+      expect(finished.spawned.length, 3);
+      expect(controller.state.board.occupiedCount, 4);
+    });
+
+    test('beginMove defers line clear until applyPendingClear', () {
+      final board = BoardState.empty();
+      for (var c = 0; c < 4; c++) {
+        board.set(CellPosition(c, 0), BallColor.red);
+      }
+      board.set(const CellPosition(0, 1), BallColor.red);
+      final controller = GameController(
+        spawn: SpawnService(colorSequence: List.filled(20, BallColor.blue)),
+      );
+      controller.startNewGame(
+        board: board,
+        next: [BallColor.blue, BallColor.blue, BallColor.blue],
+      );
+      controller.select(const CellPosition(0, 1));
+      final begun = controller.beginMove(const CellPosition(4, 0));
+      expect(begun.aftermath, TurnAftermath.clearLine);
+      expect(controller.state.board.occupiedCount, 5);
+      expect(controller.state.score, 0);
+      final cleared = controller.applyPendingClear();
+      expect(cleared.pointsGained, 10);
+      expect(controller.state.board.occupiedCount, 0);
+      expect(controller.state.score, 10);
+    });
+
     test('line clear awards points and skips spawn', () {
       final board = BoardState.empty();
       for (var c = 0; c < 4; c++) {

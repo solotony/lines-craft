@@ -7,6 +7,7 @@ import 'package:lines/game/model/ball_color.dart';
 import 'package:lines/game/model/board_state.dart';
 import 'package:lines/game/model/cell_position.dart';
 import 'package:lines/game/rendering/board_layout.dart';
+import 'package:lines/game/rendering/hud_layout.dart';
 import 'package:lines/game/ui/game_frame.dart';
 import 'package:lines/game/ui/game_screen.dart';
 import 'package:lines/main.dart';
@@ -86,6 +87,35 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.f4);
     await tester.pump();
     // Fresh random/sequence game — board rebuilt via startNewGame without board
+    expect(controller.state.score, 0);
+  });
+
+  testWidgets('mouse click on F4 restarts game', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(640, 480));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final board = BoardState.empty();
+    board.set(const CellPosition(2, 2), BallColor.yellow);
+    final controller = GameController(
+      spawn: SpawnService(colorSequence: List.filled(40, BallColor.green)),
+    );
+    controller.startNewGame(
+      board: board,
+      next: [BallColor.green, BallColor.green, BallColor.green],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: GameScreen(child: GameFrame(controller: controller)),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final f4 = HudLayout.fButtonRect(3).center;
+    await tester.tapAt(f4);
+    await tester.pump();
     expect(controller.state.score, 0);
   });
 }

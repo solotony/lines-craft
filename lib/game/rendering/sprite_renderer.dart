@@ -13,15 +13,17 @@ class SpriteRenderer {
   static const String kingLoseAsset = 'assets/images/king-lose.png';
   static const String pretenderWinsAsset = 'assets/images/pretender-wins.png';
 
-  /// King pedestal top-center and sprite anchor.
-  static const Offset kingPedestalTop = Offset(70, 280);
-  static const Offset pretenderPedestalTop = Offset(570, 300);
+  /// Default horizontal anchors (vertical position is computed from score).
+  static const double kingCenterX = 70;
+  static const double pretenderCenterX = 570;
 
   void paintPedestal(
     Canvas canvas, {
     required Offset topCenter,
     required double height,
     double width = 36,
+    double baseHeight = 10,
+    double capHeight = 6,
   }) {
     final left = (topCenter.dx - width / 2).roundToDouble();
     final top = topCenter.dy.roundToDouble();
@@ -41,10 +43,13 @@ class SpriteRenderer {
     canvas.drawRect(Rect.fromLTWH(left + width - 3, top, 3, height), dark);
 
     // Cap
-    canvas.drawRect(Rect.fromLTWH(left - 4, top - 6, width + 8, 8), light);
+    canvas.drawRect(
+      Rect.fromLTWH(left - 4, top - capHeight, width + 8, capHeight + 2),
+      light,
+    );
     // Base
     canvas.drawRect(
-      Rect.fromLTWH(left - 6, top + height, width + 12, 10),
+      Rect.fromLTWH(left - 6, top + height, width + 12, baseHeight),
       dark,
     );
   }
