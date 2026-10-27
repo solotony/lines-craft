@@ -8,6 +8,7 @@ import '../logic/game_controller.dart';
 import '../model/ball_color.dart';
 import '../model/cell_position.dart';
 import '../model/game_state.dart';
+import '../persistence/high_score_store.dart';
 import '../rendering/ball_renderer.dart';
 import '../rendering/board_layout.dart';
 import '../rendering/board_renderer.dart';
@@ -19,10 +20,16 @@ import 'sound_service.dart';
 
 /// Playable 640×480 game composition wired to [GameController].
 class GameFrame extends StatefulWidget {
-  const GameFrame({super.key, this.controller, this.sound});
+  const GameFrame({
+    super.key,
+    this.controller,
+    this.sound,
+    this.highScores,
+  });
 
   final GameController? controller;
   final SoundService? sound;
+  final HighScoreStore? highScores;
 
   @override
   State<GameFrame> createState() => GameFrameState();
@@ -31,6 +38,7 @@ class GameFrame extends StatefulWidget {
 class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
   late final GameController _controller;
   late final SoundService _sound;
+  late final HighScoreStore _scores;
   late final bool _ownsSound;
   final InputHandler _input = const InputHandler();
 
@@ -59,8 +67,10 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
     _controller = widget.controller ?? GameController();
     _ownsSound = widget.sound == null;
     _sound = widget.sound ?? SoundService();
+    _scores = widget.highScores ?? HighScoreStore();
     if (widget.controller == null) {
       _controller.startNewGame();
+      _loadKingScore();
     }
 
     _bounce = AnimationController(
@@ -76,6 +86,33 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
       ..addListener(_onMoveTick);
 
     _loadAssets();
+  }
+
+  Future<void> _loadKingScore() async {
+    final king = await _scores.loadKingScore();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _controller.load(
+        _controller.state.copyWith(kingScore: king),
+      );
+    });
+  }
+
+  Future<void> _persistScoreIfNeeded() async {
+    await _scores.saveIfHigher(_controller.state.score);
+    final king = await _scores.loadKingScore();
+    if (!mounted) {
+      return;
+    }
+    if (king != _controller.state.kingScore) {
+      setState(() {
+        _controller.load(
+          _controller.state.copyWith(kingScore: king),
+        );
+      });
+    }
   }
 
   void _onMoveTick() {
@@ -185,6 +222,7 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
   }
 
   void _restart() {
+    _persistScoreIfNeeded();
     setState(() {
       _busy = false;
       _movePath = null;
@@ -195,6 +233,7 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
       _controller.startNewGame();
       _sound.playTitle();
     });
+    _loadKingScore();
   }
 
   void _onTap(Offset local) {
@@ -225,6 +264,9 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
       _sound.playMove();
       if (!beatBefore && _controller.state.beatKing) {
         _sound.playFanfareIfNeeded(true);
+      }
+      if (_controller.state.phase == GamePhase.gameOver) {
+        _persistScoreIfNeeded();
       }
       _move
         ..reset()

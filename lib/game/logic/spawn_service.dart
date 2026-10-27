@@ -21,11 +21,12 @@ class SpawnService {
   static const int spawnPerTurn = 3;
 
   BallColor nextColor() {
-    if (_sequence != null) {
-      if (_seqIndex >= _sequence!.length) {
+    final sequence = _sequence;
+    if (sequence != null) {
+      if (_seqIndex >= sequence.length) {
         throw StateError('Color sequence exhausted');
       }
-      return _sequence![_seqIndex++];
+      return sequence[_seqIndex++];
     }
     final values = BallColor.values;
     return values[_random.nextInt(values.length)];

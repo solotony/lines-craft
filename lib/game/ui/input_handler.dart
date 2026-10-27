@@ -1,5 +1,3 @@
-import 'dart:ui' show Offset;
-
 import 'package:flutter/services.dart';
 
 import '../model/cell_position.dart';
