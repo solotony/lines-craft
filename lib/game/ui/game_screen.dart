@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../rendering/board_layout.dart';
+import '../rendering/board_renderer.dart';
 import '../rendering/palette.dart';
 import '../rendering/pixel_text_renderer.dart';
 import '../rendering/virtual_resolution.dart';
@@ -36,7 +38,7 @@ class GameScreen extends StatelessWidget {
                   child: SizedBox(
                     width: VirtualResolution.width.toDouble(),
                     height: VirtualResolution.height.toDouble(),
-                    child: child ?? const _SkeletonFrame(),
+                    child: child ?? const GameFrame(),
                   ),
                 ),
               ),
@@ -57,22 +59,39 @@ class GameScreen extends StatelessWidget {
   }
 }
 
-/// Placeholder composition used until board/UI renderers exist.
-class _SkeletonFrame extends StatelessWidget {
-  const _SkeletonFrame();
+/// Full virtual frame with board (selection for visual verification).
+class GameFrame extends StatefulWidget {
+  const GameFrame({super.key});
+
+  @override
+  State<GameFrame> createState() => _GameFrameState();
+}
+
+class _GameFrameState extends State<GameFrame> {
+  (int, int)? _selected = (4, 4);
 
   @override
   Widget build(BuildContext context) {
-    return const CustomPaint(
-      painter: _SkeletonPainter(),
-      size: Size(640, 480),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (details) {
+        final hit = BoardLayout.hitTest(details.localPosition);
+        setState(() => _selected = hit);
+      },
+      child: CustomPaint(
+        painter: GameFramePainter(selected: _selected),
+        size: const Size(640, 480),
+      ),
     );
   }
 }
 
-class _SkeletonPainter extends CustomPainter {
-  const _SkeletonPainter();
+class GameFramePainter extends CustomPainter {
+  GameFramePainter({this.selected});
 
+  final (int, int)? selected;
+
+  static const _board = BoardRenderer();
   static const _text = PixelTextRenderer();
 
   @override
@@ -88,10 +107,7 @@ class _SkeletonPainter extends CustomPainter {
     canvas.drawRect(const Rect.fromLTWH(0, 0, 640, 42), panel);
     canvas.drawRect(const Rect.fromLTWH(0, 423, 640, 57), panel);
 
-    final board = Paint()
-      ..color = GamePalette.shadowGray
-      ..isAntiAlias = false;
-    canvas.drawRect(const Rect.fromLTWH(171, 83, 306, 297), board);
+    _board.paint(canvas, selected: selected);
 
     _text.paint(
       canvas,
@@ -127,5 +143,6 @@ class _SkeletonPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant GameFramePainter oldDelegate) =>
+      oldDelegate.selected != selected;
 }
