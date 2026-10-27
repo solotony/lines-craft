@@ -15,12 +15,14 @@ import '../rendering/palette.dart';
 import '../rendering/pixel_text_renderer.dart';
 import '../rendering/sprite_renderer.dart';
 import 'input_handler.dart';
+import 'sound_service.dart';
 
 /// Playable 640×480 game composition wired to [GameController].
 class GameFrame extends StatefulWidget {
-  const GameFrame({super.key, this.controller});
+  const GameFrame({super.key, this.controller, this.sound});
 
   final GameController? controller;
+  final SoundService? sound;
 
   @override
   State<GameFrame> createState() => GameFrameState();
@@ -28,6 +30,8 @@ class GameFrame extends StatefulWidget {
 
 class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
   late final GameController _controller;
+  late final SoundService _sound;
+  late final bool _ownsSound;
   final InputHandler _input = const InputHandler();
 
   ui.Image? _king;
@@ -43,9 +47,9 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
   BallColor? _movingColor;
   List<CellPosition> _footprintTrail = [];
   int _moveCellIndex = 0;
-  bool _soundOn = true;
   bool _showHelp = false;
   bool _busy = false;
+  bool _playedLandThisHop = false;
 
   GameController get controller => _controller;
 
@@ -53,6 +57,8 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     _controller = widget.controller ?? GameController();
+    _ownsSound = widget.sound == null;
+    _sound = widget.sound ?? SoundService();
     if (widget.controller == null) {
       _controller.startNewGame();
     }
@@ -65,9 +71,19 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
     _move = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 160),
-    )..addStatusListener(_onMoveStatus);
+    )
+      ..addStatusListener(_onMoveStatus)
+      ..addListener(_onMoveTick);
 
     _loadAssets();
+  }
+
+  void _onMoveTick() {
+    // Land SFX near squash (end of hop).
+    if (_busy && _move.value > 0.85 && !_playedLandThisHop) {
+      _playedLandThisHop = true;
+      _sound.playLand();
+    }
   }
 
   void _onMoveStatus(AnimationStatus status) {
@@ -81,6 +97,8 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
           _footprintTrail = _movePath!.sublist(0, _moveCellIndex);
         }
       });
+      _playedLandThisHop = false;
+      _sound.playMove();
       _move
         ..reset()
         ..forward();
@@ -132,6 +150,9 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
   void dispose() {
     _bounce.dispose();
     _move.dispose();
+    if (_ownsSound) {
+      _sound.dispose();
+    }
     super.dispose();
   }
 
@@ -145,7 +166,7 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
       return KeyEventResult.handled;
     }
     if (_input.isToggleSound(key)) {
-      setState(() => _soundOn = !_soundOn);
+      setState(() => _sound.enabled = !_sound.enabled);
       return KeyEventResult.handled;
     }
     if (_input.isHelp(key)) {
@@ -170,7 +191,9 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
       _movingColor = null;
       _footprintTrail = [];
       _showHelp = false;
+      _sound.resetFanfareFlag();
       _controller.startNewGame();
+      _sound.playTitle();
     });
   }
 
@@ -187,21 +210,22 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
     }
 
     final before = _controller.state.selected;
+    final beatBefore = _controller.state.beatKing;
     final result = _controller.onCellTapped(cell);
 
     if (result.path != null && result.path!.length > 1) {
-      // Animate along path; board state already updated — paint moving ghost
-      // from path while hiding destination ball until done.
       setState(() {
         _busy = true;
         _movePath = result.path;
         _movingColor = _controller.state.board[result.path!.last];
-        // Temporarily hide the arrived ball during animation by tracking path.
         _moveCellIndex = 0;
         _footprintTrail = [];
+        _playedLandThisHop = false;
       });
-      // Put ball back visually at start for animation: restore temporarily
-      // by storing path; painter draws moving ball and skips final cell until done.
+      _sound.playMove();
+      if (!beatBefore && _controller.state.beatKing) {
+        _sound.playFanfareIfNeeded(true);
+      }
       _move
         ..reset()
         ..forward();
@@ -209,6 +233,7 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
       setState(() {});
       if (before != _controller.state.selected &&
           _controller.state.selected != null) {
+        _sound.playSelect();
         _bounce
           ..reset()
           ..repeat(reverse: true);
@@ -240,7 +265,7 @@ class GameFrameState extends State<GameFrame> with TickerProviderStateMixin {
                 king: _controller.state.beatKing ? _kingLose : _king,
                 pretender:
                     _controller.state.beatKing ? _pretenderWins : _pretender,
-                soundOn: _soundOn,
+                soundOn: _sound.enabled,
                 showHelp: _showHelp,
                 animating: _busy,
               ),

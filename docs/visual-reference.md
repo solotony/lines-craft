@@ -171,7 +171,7 @@ From `docs/sound-animation.md` and `docs/mechanics.md` (implement in Stages 7–
 | Exact Gamos 1992 scoring table | Provisional Lines 98 table in `docs/counting.md` |
 | Exact selection highlight chrome | 2 px `white` inset border |
 | Gothic “Handicap”/“Pretender” typeface | Pixel 8×8 in `labelYellow` for MVP |
-| Original PCM/MIDI audio | Placeholder tones or documented missing assets |
+| Original PCM/MIDI audio | Placeholder WAV tones in `assets/sounds/` (not original Gamos recordings); title melody and fanfare are separate assets as required |
 | Title-screen cityscape art | Out of MVP raster budget; start in gameplay or simple pixel title |
 
 ---
